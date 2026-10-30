@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ChildStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ExerciseType {
+  SPELL_WORD
+  MISSING_LETTERS
+  REORDER_LETTERS
+  DICTATION
+}
+
+enum LearningSessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model Parent {
+  id        String         @id @default(cuid())
+  clerkId   String         @unique @map("clerk_id")
+  email     String?
+  name      String?
+  children  ChildProfile[]
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@map("parents")
+}
+
+model ChildProfile {
+  id           String           @id @default(cuid())
+  parentId     String           @map("parent_id")
+  parent       Parent           @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  displayName  String           @map("display_name")
+  avatarKey    String?          @map("avatar_key")
+  ageGroup     String?          @map("age_group")
+  status       ChildStatus      @default(ACTIVE)
+  lastActiveAt DateTime?        @map("last_active_at")
+  attempts     ExerciseAttempt[]
+  progress     WordProgress[]
+  rewards      Reward[]
+  sessions     LearningSession[]
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@index([parentId, status])
+  @@map("child_profiles")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  difficulty  Int      @default(1)
+  words       Word[]
+  sessions    LearningSession[]
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("categories")
+}
+
+model Word {
+  id              String        @id @default(cuid())
+  categoryId      String        @map("category_id")
+  category        Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  spelling        String
+  definition      String?
+  exampleSentence String?       @map("example_sentence")
+  audioUrl        String?       @map("audio_url")
+  exercises       Exercise[]
+  progress        WordProgress[]
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@unique([categoryId, spelling])
+  @@index([spelling])
+  @@map("words")
+}
+
+model Exercise {
+  id          String           @id @default(cuid())
+  wordId      String           @map("word_id")
+  word        Word             @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  type        ExerciseType
+  difficulty  Int              @default(1)
+  prompt      String?
+  isPublished Boolean          @default(false) @map("is_published")
+  attempts    ExerciseAttempt[]
+  currentSessions LearningSession[] @relation("CurrentExercise")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([wordId, type, isPublished])
+  @@map("exercises")
+}
+
+model ExerciseAttempt {
+  id          String   @id @default(cuid())
+  childId     String   @map("child_id")
+  child       ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  exerciseId  String   @map("exercise_id")
+  exercise    Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  answer      String
+  isCorrect   Boolean  @map("is_correct")
+  durationMs  Int?     @map("duration_ms")
+  sessionId   String?  @map("session_id")
+  session     LearningSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  idempotencyKey String? @map("idempotency_key")
+  reward      Reward?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([childId, createdAt])
+  @@index([exerciseId, isCorrect])
+  @@unique([childId, idempotencyKey])
+  @@index([sessionId, createdAt])
+  @@map("exercise_attempts")
+}
+
+model LearningSession {
+  id                String                @id @default(cuid())
+  childId           String                @map("child_id")
+  child             ChildProfile          @relation(fields: [childId], references: [id], onDelete: Cascade)
+  categoryId        String                @map("category_id")
+  category          Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status            LearningSessionStatus @default(IN_PROGRESS)
+  retryMissedOnly   Boolean               @default(false) @map("retry_missed_only")
+  currentExerciseId String?               @map("current_exercise_id")
+  currentExercise   Exercise?             @relation("CurrentExercise", fields: [currentExerciseId], references: [id], onDelete: SetNull)
+  servedExerciseIds Json                  @default("[]") @map("served_exercise_ids")
+  attempts          ExerciseAttempt[]
+  startedAt         DateTime              @default(now()) @map("started_at")
+  completedAt       DateTime?             @map("completed_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  @@index([childId, categoryId, status])
+  @@map("learning_sessions")
+}
+
+model WordProgress {
+  id           String       @id @default(cuid())
+  childId      String       @map("child_id")
+  child        ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  wordId       String       @map("word_id")
+  word         Word         @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  attempts     Int          @default(0)
+  correctCount Int          @default(0) @map("correct_count")
+  masteryLevel Int          @default(0) @map("mastery_level")
+  reviewAt     DateTime?    @map("review_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@unique([childId, wordId])
+  @@index([childId, masteryLevel])
+  @@map("word_progress")
+}
+
+model Reward {
+  id        String       @id @default(cuid())
+  childId   String       @map("child_id")
+  child     ChildProfile @relation(fields: [childId], references: [id], onDelete: Cascade)
+  kind      String
+  xp        Int          @default(0)
+  metadata  Json?
+  sourceAttemptId String? @unique @map("source_attempt_id")
+  sourceAttempt   ExerciseAttempt? @relation(fields: [sourceAttemptId], references: [id], onDelete: SetNull)
+  earnedAt  DateTime     @default(now()) @map("earned_at")
+
+  @@index([childId, earnedAt])
+  @@map("rewards")
+}

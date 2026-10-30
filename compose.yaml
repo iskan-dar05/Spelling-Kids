@@ -1,0 +1,81 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: spelling_kids
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spelling_kids"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  speech-ai:
+    build:
+      context: ./speech-ai
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./speech-ai/.env
+    environment:
+      HF_HOME: /models/huggingface
+      TTS_HOME: /models/tts
+      XDG_CACHE_HOME: /models/cache
+    volumes:
+      - speech-models:/models
+    expose:
+      - "8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/spelling_kids?schema=public
+      SPEECH_AI_URL: http://speech-ai:8001
+      SPEECH_AUDIO_CACHE_DIR: /app/.cache/speech
+    ports:
+      - "3000:3000"
+    volumes:
+      - speech-audio-cache:/app/.cache/speech
+    depends_on:
+      db:
+        condition: service_healthy
+      speech-ai:
+        condition: service_healthy
+
+  mobile:
+    profiles: ["mobile"]
+    build:
+      context: ./spelling-kids
+      dockerfile: Dockerfile
+    env_file:
+      - ./spelling-kids/.env
+    ports:
+      - "8081:8081"
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:
+  speech-models:
+  speech-audio-cache:
